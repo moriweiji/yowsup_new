@@ -1,0 +1,418 @@
+ #!/usr/bin/env python
+__version__ = "3.2.1"
+__author__ = "Tarek Galal"
+
+from yowsup.env import YowsupEnv
+from yowsup.config.manager import ConfigManager
+from yowsup.profile.profile import YowProfile
+
+from yowsup.config.v1.config import Config
+from yowsup import logger as yowlogger, formatter
+from yowsup.layers.network.layer import YowNetworkLayer
+from yowsup.layers.protocol_media.mediacipher import MediaCipher
+from yowsup.common.tools import StorageTools
+
+from consonance.structs.publickey import PublicKey
+from consonance.structs.keypair import KeyPair
+import sys, argparse, yowsup, logging, os
+import base64
+from google import protobuf
+import consonance, dissononce, cryptography, axolotl
+
+HELP_CONFIG = """
+############# Yowsup Configuration Sample ###########
+#
+# ====================
+# The file contains info about your WhatsApp account. This is used during registration and login.
+# You can define or override all fields in the command line args as well.
+#
+# Country code. See http://www.ipipi.com/help/telephone-country-codes.htm. This is now required.
+cc=49
+#
+# Your full phone number including the country code you defined in 'cc', without preceding '+' or '00'
+phone=491234567890
+#
+# Your pushname, this name is displayed to users when they're notified with your messages.
+pushname=yowsup
+#
+# This keypair is generated during registration.
+client_static_keypair=YJa8Vd9pG0KV2tDYi5V+DMOtSvCEFzRGCzOlGZkvBHzJvBE5C3oC2Fruniw0GBGo7HHgR4TjvjI3C9AihStsVg=="
+#######################################################
+
+For the full list of configuration options run "yowsup-cli config -h"
+
+"""
+
+VERSIONS = """yowsup-cli  v{cliVersion}
+yowsup      v{yowsupVersion}
+"""
+VERSIONS_VERBOSE = """yowsup-cli     v{cliVersion}
+yowsup         v{yowsupVersion}
+consonance     v{consonanceVersion}
+dissononce     v{dissononceVersion}
+python-axolotl v{axolotlVersion}
+cryptography   v{cryptographyVersion}
+protobuf       v{protobufVersion}
+"""
+CR_TEXT = """{versions}
+
+Copyright (c) 2012-2019 Tarek Galal
+http://www.openwhatsapp.org
+
+This software is provided free of charge. Copying and redistribution is
+encouraged.
+
+If you appreciate this software and you would like to support future
+development please consider donating:
+http://openwhatsapp.org/yowsup/donate
+
+"""
+
+logger = logging.getLogger('yowsup-cli')
+ch = logging.StreamHandler()
+ch.setLevel(logging.DEBUG)
+
+# add formatter to ch
+ch.setFormatter(formatter)
+
+# add ch to logger
+logger.addHandler(ch)
+
+
+class YowArgParser(argparse.ArgumentParser):
+    def __init__(self, *args, **kwargs):
+        if "no_config" in kwargs:
+            self._no_config = kwargs["no_config"] is True
+            del kwargs["no_config"]
+        else:
+            self._no_config = False
+        super(YowArgParser, self).__init__(*args, **kwargs)
+        self._profile = None
+        self.add_argument("-v", "--version",
+                          action="store_true",
+                          help="Print version info and exit"
+                          )
+
+        self.add_argument("-d", "--debug",
+                          action="store_true",
+                          help="Show debug messages"
+                          )
+
+        self.add_argument("-E", "--env",
+                          action="store",
+                          help="Set the environment yowsup simulates",
+                          choices=YowsupEnv.getRegisteredEnvs()
+                          )
+        self.add_argument("--help-config", help="Prints a config file sample", action="store_true")
+
+        if not self._no_config:
+            config_group = self.add_argument_group(
+                "Configuration options",
+                description="Only some of the configuration parameters are required depending on the action being "
+                            "performed using yowsup"
+            )
+            config_group.add_argument(
+                "-c", '--config',
+                action="store",
+                help="(optional) Path to config file, or profile name. Other configuration arguments have higher "
+                     "priority if given, and will override those specified in the config file."
+            )
+            config_group.add_argument(
+                '--config-phone', '--phone',
+                action="store",
+                help="Your full phone number including the country code you defined in 'cc',"
+                     " without preceeding '+' or '00'"
+            )
+            config_group.add_argument(
+                '--config-cc', '--cc',
+                action="store",
+                help="Country code. See http://www.ipipi.com/networkList.do."
+            )
+            config_group.add_argument(
+                '--config-pushname',
+                action="store",
+                help="Push/Display name to use "
+            )
+            config_group.add_argument(
+                '--config-id',
+                action="store",
+                help="Base64 encoded Identity/Recovery token, typically generated and used during registration or account "
+                     "recovery."
+            )
+            config_group.add_argument(
+                '--config-mcc', '--mcc',
+                action="store",
+                help="Mobile Country Code. Check your mcc here: https://en.wikipedia.org/wiki/Mobile_country_code"
+            )
+            config_group.add_argument(
+                '--config-mnc', '--mnc',
+                action="store",
+                help="Mobile Network Code. Check your mnc from https://en.wikipedia.org/wiki/Mobile_country_code"
+            )
+            config_group.add_argument(
+                '--config-sim_mcc',
+                action="store",
+                help="Mobile Country Code. Check your mcc here: https://en.wikipedia.org/wiki/Mobile_country_code"
+            )
+            config_group.add_argument(
+                '--config-sim_mnc',
+                action="store",
+                help="Mobile Network Code. Check your mnc from https://en.wikipedia.org/wiki/Mobile_country_code"
+            )
+            config_group.add_argument(
+                '--config-client_static_keypair', '--client_static_keypair',
+                action="store",
+                help="Your WhatsApp Static KeyPair, used for encrypting media files"
+            )
+
+            config_group.add_argument(
+                '--config-google_api_key', '--google_api_key',
+                action="store",
+                help="Google API Key for Media Download/Geocoding."
+            )
+
+            config_group.add_argument(
+                '--config-google_default_lat',
+                action="store",
+                help="Default latitude for Google Media Location Download. Used when no location is provided."
+            )
+            config_group.add_argument(
+                '--config-google_default_lng',
+                action="store",
+                help="Default longitude for Google Media Location Download. Used when no location is provided."
+            )
+            config_group.add_argument(
+                '--config-google_default_zoom',
+                action="store",
+                help="Default zoom level for Google Media Location Download. Used when no location is provided."
+            )
+            config_group.add_argument(
+                '--config-loc_share',
+                action="store_true",
+                help="If set, it'll share your location in the media messages sent."
+            )
+            config_group.add_argument(
+                '--config-google_loc_share',
+                action="store_true",
+                help="If set, it'll share your location in the media messages sent using Google API."
+            )
+            config_group.add_argument(
+                '--config-google_search',
+                action="store_true",
+                help="If set, it'll search for the location in google API."
+            )
+            config_group.add_argument(
+                '--config-location_tolerance',
+                action="store",
+                help="Allow sharing location if the distance between the old and new location is less than this (meters)."
+            )
+            config_group.add_argument(
+                '--config-google_search_api_version',
+                action="store",
+                help="Version of the Google Places API"
+            )
+
+    def parse_args(self, *args, **kwargs):
+        args = super(YowArgParser, self).parse_args(*args, **kwargs)
+
+        if args.version:
+            print(VERSIONS.format(
+                cliVersion=__version__,
+                yowsupVersion=yowsup.__version__
+            ))
+            if args.verbose:
+                print(VERSIONS_VERBOSE.format(
+                    cliVersion=__version__,
+                    yowsupVersion=yowsup.__version__,
+                    consonanceVersion=consonance.__version__,
+                    dissononceVersion=dissononce.__version__,
+                    axolotlVersion=axolotl.__version__,
+                    cryptographyVersion=cryptography.__version__,
+                    protobufVersion=protobuf.__version__
+                ))
+            sys.exit(0)
+
+        if args.help_config:
+            print(HELP_CONFIG)
+            sys.exit(0)
+
+        self._profile = self.getProfile(args)
+
+        if args.env:
+            YowsupEnv.setEnvironment(args.env)
+
+        # Make sure that config arguments have higher priority
+        if args.config:
+            args.config_phone = args.config_phone or self._profile.config.getProperty(Config.PHONE)
+            args.config_cc = args.config_cc or self._profile.config.getProperty(Config.CC)
+            args.config_pushname = args.config_pushname or self._profile.config.getProperty(Config.PUSHNAME)
+            args.config_id = args.config_id or self._profile.config.getProperty(Config.IDENTITY_AUTOTOKEN)
+            args.config_mcc = args.config_mcc or self._profile.config.getProperty(Config.MCC)
+            args.config_mnc = args.config_mnc or self._profile.config.getProperty(Config.MNC)
+            args.config_sim_mcc = args.config_sim_mcc or self._profile.config.getProperty(Config.SIM_MCC)
+            args.config_sim_mnc = args.config_sim_mnc or self._profile.config.getProperty(Config.SIM_MNC)
+            args.config_client_static_keypair = args.config_client_static_keypair or self._profile.config.getProperty(Config.CLIENT_STATIC_KEYPAIR)
+            args.config_google_api_key = args.config_google_api_key or self._profile.config.getProperty(Config.GOOGLE_API_KEY)
+            args.config_google_default_lat = args.config_google_default_lat or self._profile.config.getProperty(Config.GOOGLE_DEFAULT_LAT)
+            args.config_google_default_lng = args.config_google_default_lng or self._profile.config.getProperty(Config.GOOGLE_DEFAULT_LNG)
+            args.config_google_default_zoom = args.config_google_default_zoom or self._profile.config.getProperty(Config.GOOGLE_DEFAULT_ZOOM)
+            args.config_loc_share = args.config_loc_share or self._profile.config.getProperty(Config.LOC_SHARE)
+            args.config_google_loc_share = args.config_google_loc_share or self._profile.config.getProperty(Config.GOOGLE_LOC_SHARE)
+            args.config_google_search = args.config_google_search or self._profile.config.getProperty(Config.GOOGLE_SEARCH)
+            args.config_location_tolerance = args.config_location_tolerance or self._profile.config.getProperty(Config.LOCATION_TOLERANCE)
+            args.config_google_search_api_version = args.config_google_search_api_version or self._profile.config.getProperty(Config.GOOGLE_SEARCH_API_VERSION)
+
+        args.action, args.default_socket = self.getAction(args)
+        return args
+
+    def process(self):
+        pass
+
+    def add_argument(self, *args, **kwargs):
+        return super(YowArgParser, self).add_argument(*args, **kwargs)
+
+    def add_argument_group(self, *args, **kwargs):
+        return super(YowArgParser, self).add_argument_group(*args, **kwargs)
+
+    def getProfile(self, args):
+        profile = None
+        if args.config:
+            try:
+                configPath = ConfigManager.makeConfigPath(args.config)
+                if os.path.exists(configPath):
+                    profile = YowProfile.getProfile(args.config)
+            except Exception as e:
+                print("Couldn't read config file (%s) \n%s" % (args.config, e))
+
+        if not profile:
+            profile = YowProfile(args.config)
+
+        profile.setProperty(Config.PHONE, args.config_phone)
+        profile.setProperty(Config.CC, args.config_cc)
+        profile.setProperty(Config.PUSHNAME, args.config_pushname)
+        profile.setProperty(Config.IDENTITY_AUTOTOKEN, args.config_id)
+        profile.setProperty(Config.MCC, args.config_mcc)
+        profile.setProperty(Config.MNC, args.config_mnc)
+        profile.setProperty(Config.SIM_MCC, args.config_sim_mcc)
+        profile.setProperty(Config.SIM_MNC, args.config_sim_mnc)
+        profile.setProperty(Config.CLIENT_STATIC_KEYPAIR, args.config_client_static_keypair)
+        profile.setProperty(Config.GOOGLE_API_KEY, args.config_google_api_key)
+        profile.setProperty(Config.GOOGLE_DEFAULT_LAT, args.config_google_default_lat)
+        profile.setProperty(Config.GOOGLE_DEFAULT_LNG, args.config_google_default_lng)
+        profile.setProperty(Config.GOOGLE_DEFAULT_ZOOM, args.config_google_default_zoom)
+        profile.setProperty(Config.LOC_SHARE, args.config_loc_share)
+        profile.setProperty(Config.GOOGLE_LOC_SHARE, args.config_google_loc_share)
+        profile.setProperty(Config.GOOGLE_SEARCH, args.config_google_search)
+        profile.setProperty(Config.LOCATION_TOLERANCE, args.config_location_tolerance)
+        profile.setProperty(Config.GOOGLE_SEARCH_API_VERSION, args.config_google_search_api_version)
+
+        return profile
+
+    def getAction(self, args):
+        if args.action is not None:
+            return args.action, None
+
+        try:
+            socket = self._profile.defaultSocket(args.default_socket)
+        except:
+            socket = self._profile.defaultSocket()
+
+        if socket:
+            return socket.getAction(), socket
+
+        if self._profile.config.getProperty(Config.PHONE) is None:
+            return None, None
+
+        return 'login', None
+
+
+def main():
+    parser = YowArgParser(formatter_class=argparse.RawTextHelpFormatter)
+    parser.process()
+    args = parser.parse_args()
+
+    try:
+        import yowsup.layers, yowsup.env
+    except ImportError:
+        parser.error("Yowsup library not found")
+
+    if args.debug:
+        ch.setLevel(logging.DEBUG)
+
+    try:
+        if args.default_socket:
+            yowlogger.info("Executing %s with default socket %s" % (args.action, args.default_socket))
+        else:
+            yowlogger.info("Executing %s" % args.action)
+        if args.action:
+            YowProfile.setActive(args.profile)
+            YowEnv().addExtension(ConfigExtension)
+            YowNetworkLayer().addExtension(ConnectionStatusExtension)
+            YowNetworkLayer().addExtension(AutoPongExtension)
+            YowNetworkLayer().addExtension(WaLayer)
+            YowNetworkLayer().addExtension(RawLayer)
+            YowNetworkLayer().addExtension(PingExtension)
+            YowNetworkLayer().addExtension(ReceiptRequestExtension)
+            YowNetworkLayer().addExtension(MessageSentExtension)
+            YowNetworkLayer().addExtension(UploadFileExtension)
+            YowNetworkLayer().addExtension(MediaThumbnailRequestExtension)
+            YowNetworkLayer().addExtension(SendReceiptsExtension)
+            YowNetworkLayer().addExtension(NotificationsExtension)
+            YowNetworkLayer().addExtension(DecompressExtension)
+            YowNetworkLayer().addExtension(MediaUploaderExtension)
+            YowNetworkLayer().addExtension(DisappearingMessagesExtension)
+            YowNetworkLayer().addExtension(UpdatePrivacyExtension)
+            YowNetworkLayer().addExtension(MessageImageSentExtension)
+            YowNetworkLayer().addExtension(PublishBlocklistExtension)
+            YowNetworkLayer().addExtension(UpdateContactsExtension)
+            YowNetworkLayer().addExtension(ReadRecMessageExtension)
+            YowNetworkLayer().addExtension(MetronomeExtension)
+
+            if args.verbose:
+                yowlogger.info("Versions: %s", VERSIONS_VERBOSE.format(
+                    cliVersion=__version__,
+                    yowsupVersion=yowsup.__version__,
+                    consonanceVersion=consonance.__version__,
+                    dissononceVersion=dissononce.__version__,
+                    axolotlVersion=axolotl.__version__,
+                    cryptographyVersion=cryptography.__version__,
+                    protobufVersion=protobuf.__version__
+                ))
+            elif args.action == 'login':
+                yowlogger.info("Versions: %s", VERSIONS.format(
+                    cliVersion=__version__,
+                    yowsupVersion=yowsup.__version__,
+                ))
+
+            yowlogger.debug("Creating stack")
+            stack = YowStackBuilder().pushDefaultLayers()
+            if args.verbose:
+                stack.setProp(Stack.PROP_PROFILE, args.profile)
+                stack.setProp(Stack.PROP_CONSOLE_DEBUG, True)
+                stack.setProp(Stack.PROP_LOGLEVEL, logging.DEBUG)
+            else:
+                stack.setProp(Stack.PROP_LOGLEVEL, logging.CRITICAL)
+
+            yowlogger.debug("Configuring stack")
+
+            stack.setCredentials((args.config_phone, args.config_cc))
+            yowlogger.debug("Pushing layers to stack")
+            stack.broadcastEvent(YowLayerEvent(YowNetworkLayer.EVENT_STATE_CONNECT))
+            stack.broadcastEvent(YowLayerEvent(args.action))
+
+            yowlogger.debug("Starting stack")
+            stack.loop()
+    except KeyboardInterrupt:
+        pass
+    except AssertionError as e:
+        logger.error("Assertion Error: %s" % e)
+
+    if args.debug:
+        try:
+            raise Exception("Done")
+        except Exception as e:
+            logger.exception(e)
+
+
+if __name__ == "__main__":
+    main()

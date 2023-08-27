@@ -53,6 +53,7 @@ yowsup/demos/__init__.py
 yowsup/demos/cli/__init__.py
 yowsup/demos/cli/cli.py
 yowsup/demos/cli/layer.py
+yowsup/demos/cli/m.py
 yowsup/demos/cli/stack.py
 yowsup/demos/common/__init__.py
 yowsup/demos/common/sink_worker.py
@@ -71,6 +72,8 @@ yowsup/demos/sendclient/stack.py
 yowsup/env/__init__.py
 yowsup/env/env.py
 yowsup/env/env_android.py
+yowsup/env/env_scrape.py
+yowsup/env/env_utilities.py
 yowsup/layers/__init__.py
 yowsup/layers/auth/__init__.py
 yowsup/layers/auth/layer_authentication.py
@@ -349,6 +352,8 @@ yowsup/layers/protocol_receipts/protocolentities/receipt_incoming.py
 yowsup/layers/protocol_receipts/protocolentities/receipt_outgoing.py
 yowsup/layers/protocol_receipts/protocolentities/test_receipt_incoming.py
 yowsup/layers/protocol_receipts/protocolentities/test_receipt_outgoing.py
+yowsup/layers/stanzaregulator/__init__.py
+yowsup/layers/stanzaregulator/layer.py
 yowsup/profile/__init__.py
 yowsup/profile/profile.py
 yowsup/registration/__init__.py

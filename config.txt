@@ -1,0 +1,4 @@
+cc=91
+phone=916266588279
+pushname=YowsupWhatsapp
+client_static_keypair=cMsQL0lyYr813Z5d1Xx7EoynND8s4Cw081D4PphN1EXcsICTqSTM4Ja/OBu3fnp+KxSX/Ka5JbaRA//N66jeDw==

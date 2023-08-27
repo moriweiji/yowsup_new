@@ -1,0 +1,16 @@
+{
+    "__version__": 1,
+    "cc": "91",
+    "client_static_keypair": "cMsQL0lyYr813Z5d1Xx7EoynND8s4Cw081D4PphN1EXcsICTqSTM4Ja/OBu3fnp+KxSX/Ka5JbaRA//N66jeDw==",
+    "expid": "0M/iDmFeRiiRDkYOaBLw+Q==",
+    "fdid": "a1e042f8-ffaa-447b-83a8-d68703efddd9",
+    "id": "WlO44a0lBgTus89R1LuErdlyH/o=",
+    "login": "916266588279",
+    "mcc": "405",
+    "mnc": "000",
+    "phone": "916266588279",
+    "pushname": "YowsupWhatsapp",
+    "server_static_public": "M9brfa5ZRYf0eVsT7CQ+yBPOzEQO/eZ37RoA6DpvHFo=",
+    "sim_mcc": "000",
+    "sim_mnc": "000"
+}
